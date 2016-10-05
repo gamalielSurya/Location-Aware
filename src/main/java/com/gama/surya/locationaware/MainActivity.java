@@ -1,16 +1,24 @@
 package com.gama.surya.locationaware;
 
 import android.Manifest;
+import android.annotation.SuppressLint;
+import android.content.Context;
+import android.content.Intent;
 import android.content.IntentSender;
 import android.content.pm.PackageManager;
 import android.location.Location;
 
+import android.location.LocationManager;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.ResultReceiver;
 import android.support.v4.app.ActivityCompat;
 import android.support.v4.content.ContextCompat;
 import android.support.v7.app.AppCompatActivity;
 import android.util.Log;
+import android.widget.ProgressBar;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.api.GoogleApiClient;
@@ -22,26 +30,40 @@ import com.google.android.gms.location.LocationServices;
 import java.text.DateFormat;
 import java.util.Date;
 
+/*MODUL
+1. Location Updates
+2. Location Address*/
+
 public class MainActivity extends AppCompatActivity implements
         GoogleApiClient.OnConnectionFailedListener,
         GoogleApiClient.ConnectionCallbacks,
         LocationListener {
 
+    /*1. START*/
     public static final String TAG = MainActivity.class.getSimpleName();
-
-    private final static int CONNECTION_FAILURE_RESOLUTION_REQUEST = 9000;
-    private final static String LOCATION_KEY = "location_key";
-    private final static String LAST_UPDATED_TIME = "last_updated_time";
+    private static final int CONNECTION_FAILURE_RESOLUTION_REQUEST = 9000;
+    private static final String LOCATION_KEY = "location_key";
+    private static final String LAST_UPDATED_TIME = "last_updated_time";
 
     private LocationRequest mLocationRequest;
     private GoogleApiClient mGoogleApiClient;
-
     private TextView mLatitude;
     private TextView mLongitude;
     private TextView mLastUpdate;
-
     private Location currentLocation;
     private String lastUpdateTime;
+    /*1. FINISH*/
+
+    /*2. START*/
+    protected static final String ADDRESS_REQUESTED_KEY = "address-request-pending";
+    protected static final String LOCATION_ADDRESS_KEY = "location-address";
+
+    protected String mAddressOutput;
+    private AddressResultReceiver mResultReceiver;
+    private TextView mLocationAddressTextView;
+    private boolean mAddressRequested;
+    ProgressBar mProgressBar;
+    /*2. FINISH*/
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -51,6 +73,16 @@ public class MainActivity extends AppCompatActivity implements
         mLatitude = (TextView) findViewById(R.id.current_latitude);
         mLongitude = (TextView) findViewById(R.id.current_longitude);
         mLastUpdate = (TextView) findViewById(R.id.last_update_time);
+
+        /*2. START*/
+        mResultReceiver = new AddressResultReceiver(new Handler());
+        mLocationAddressTextView = (TextView) findViewById(R.id.location_address_view);
+        mProgressBar = (ProgressBar) findViewById(R.id.progress_bar);
+        // Set default, then update using values stored in the Bundle
+        mAddressRequested = false;
+        mAddressOutput = "";
+        updateUIWidgets();
+        /*2. FINISH*/
 
         mGoogleApiClient = new GoogleApiClient.Builder(this)
                 .addConnectionCallbacks(this)
@@ -132,12 +164,22 @@ public class MainActivity extends AppCompatActivity implements
             startLocationUpdates();
         }
 
+        /*2. START*/
+        startIntentService();
+        mAddressRequested = true;
+        /*2. FINISH*/
+
         updateUI();
     }
 
+
+
     @Override
     public void onConnectionSuspended(int cause) {
-
+        // The connection to Google Play services was lost for some reason. We call connect() to
+        // attempt to re-establish the connection.
+        Toast.makeText(MainActivity.this, "Connection Suspended", Toast.LENGTH_SHORT).show();
+        mGoogleApiClient.connect();
     }
 
     @Override
@@ -192,10 +234,89 @@ public class MainActivity extends AppCompatActivity implements
                 lastUpdateTime = savedInstanceState.getString(
                         LAST_UPDATED_TIME);
             }
+
+            /*2. START*/
+            // Check savedInstanceState to see if the address was previously requested.
+            if (savedInstanceState.keySet().contains(ADDRESS_REQUESTED_KEY)) {
+                mAddressRequested = savedInstanceState.getBoolean(ADDRESS_REQUESTED_KEY);
+            }
+            // Check savedInstanceState to see if the location address string was previously found
+            // and stored in the Bundle. If it was found, display the address string in the UI.
+            if (savedInstanceState.keySet().contains(LOCATION_ADDRESS_KEY)) {
+                mAddressOutput = savedInstanceState.getString(LOCATION_ADDRESS_KEY);
+                displayAddressOutput();
+            }
+            /*2. FINISH*/
+
             updateUI();
         }
     }
 
 
+    /*2. START*/
+
+    //Receiver for data sent from FetchAddressIntentService
+    @SuppressLint("ParcelCreator")
+    public class AddressResultReceiver extends ResultReceiver {
+        public AddressResultReceiver(Handler handler) {
+            super(handler);
+        }
+
+        // Receives data sent from FetchAddressIntentService and updates the UI in MainActivity
+        @Override
+        protected void onReceiveResult(int resultCode, Bundle resultData) {
+            //Display the address string or an error message sent from the intent service
+            mAddressOutput = resultData.getString(Constants.RESULT_DATA_KEY);
+            displayAddressOutput();
+
+            //Show a toast message if an address was found
+            if (resultCode == Constants.SUCCESS_RESULT) {
+                Toast.makeText(getBaseContext(), "Address Found", Toast.LENGTH_SHORT).show();
+            }
+
+            //Reset. Enable the Fetch address button and stop showing the progress bar
+            mAddressRequested = false;
+            updateUIWidgets();
+        }
+    }
+
+//     Creates an intent, adds location data to it as an extra, and starts the intent service for
+//     fetching an address.
+    protected void startIntentService() {
+        // Create an intent for passing to the intent service responsible for fetching the address.
+        Intent intent = new Intent(this, FetchAddressIntentService.class);
+
+        // Pass the result receiver as an extra to the service.
+        intent.putExtra(Constants.RECEIVER, mResultReceiver);
+
+        // Pass the location data as an extra to the service.
+        intent.putExtra(Constants.LOCATION_DATA_EXTRA, currentLocation);
+
+        // Start the service. If the service isn't already running, it is instantiated and started
+        // (creating a process for it if needed); if it is running then it remains running. The
+        // service kills itself automatically once all intents are processed.
+        startService(intent);
+    }
+
+    /**
+     * Toggles the visibility of the progress bar. Enables or disables the Fetch Address button.
+     */
+    private void updateUIWidgets() {
+        if (mAddressRequested) {
+            mProgressBar.setVisibility(ProgressBar.VISIBLE);
+        } else {
+            mProgressBar.setVisibility(ProgressBar.GONE);
+        }
+    }
+
+    /**
+     * Updates the address in the UI.
+     */
+    protected void displayAddressOutput() {
+        mLocationAddressTextView.setText(mAddressOutput);
+    }
+
+
+    /*2. FINISH*/
 
 }

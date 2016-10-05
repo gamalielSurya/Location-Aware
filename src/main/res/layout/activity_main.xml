@@ -22,4 +22,16 @@
         android:text="Last Update Time :  "
         android:layout_width="wrap_content"
         android:layout_height="wrap_content" />
+    <ProgressBar
+        android:id="@+id/progress_bar"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_centerInParent="true" />
+
+    <TextView
+        android:id="@+id/location_address_view"
+        android:text="Address here..."
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+/>
 </LinearLayout>
